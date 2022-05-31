@@ -1,11 +1,13 @@
 #include <thread>
 #include <vector>
+#include <charconv>
 #include <chrono>
 #include <iostream>
 #include <random>
 #include <algorithm>
 #include <string>
 #include <string_view>
+#include <optional>
 
 class Stopwatch
 {
@@ -32,7 +34,7 @@ public:
     t = std::chrono::high_resolution_clock::now();
   }
 
-  const std::string& name() const
+  const std::string &name() const
   {
     return d_name;
   }
@@ -43,26 +45,47 @@ private:
 };
 
 template <typename It>
-It parallel_max(It first, It last)
+It parallel_max(It first, It last, int threads = 1)
 {
-  It mid = first + (last - first)/2;
-  It res1, res2;
-  auto mymax1 = [first, mid, &res1](){ res1 = std::max_element(first, mid); };
-  std::thread t1(mymax1);
-   auto mymax2 = [mid, last, &res2](){ res2 = std::max_element(mid, last); };
-  std::thread t2(mymax2);
-  t1.join();
-  t2.join();
-  return (*res1 < *res2) ? res2 : res1;
+  auto len = std::distance(first, last);
+  const int r = len % threads;
+  const int d = len / threads;
+  std::vector<It> res(threads);
+  std::vector<std::thread> pool;
+  pool.reserve(threads);
+  auto task = [](It a, It b, It &out)
+  { out = std::max_element(a, b); };
+
+  for (int i = 0; i != r; ++i)
+  {
+    It prev = first;
+    std::advance(first, d + 1);
+    pool.emplace_back(task,
+                      prev, first, std::ref(res[i]));
+  }
+
+  for (int i = r; i != threads; ++i)
+  {
+    It prev = first;
+    std::advance(first, d);
+    pool.emplace_back(task, prev, first, std::ref(res[i]));
+  }
+
+  for (auto &t : pool)
+  {
+    t.join();
+  }
+
+  return *std::max_element(res.begin(), res.end(), [](auto a, auto b)
+                           { return *a < *b; });
 }
 
 std::vector<double> random_vector(int i_size)
 {
   std::vector<double> res(i_size);
   std::mt19937 gen;
-  constexpr double A = -1000000.;
-  constexpr double B = 1000000.;
-  std::uniform_real_distribution<> dist(A, B);
+  std::normal_distribution<> dist(0.);
+
   for (int i = 0; i != i_size; ++i)
   {
     res[i] = dist(gen);
@@ -70,19 +93,35 @@ std::vector<double> random_vector(int i_size)
   return res;
 }
 
-int main()
+static std::optional<int> get_int(std::string_view i_str)
+{
+  int num = 0;
+  auto res = std::from_chars(i_str.begin(), i_str.end(), num);
+  if (res.ec == std::errc{})
+    return num;
+  return {};
+}
+
+int main(int argc, const char *argv[])
 {
   constexpr int N = 100000000;
   Stopwatch t("random vector creation");
   auto data = random_vector(N);
   std::cout << t.stamp() << "\n";
-
+  // parallel launch
+  int threads = 8;
+  if (argc == 2)
+  {
+    auto num = get_int(argv[1]);
+    if (num)
+      threads = *num;
+  }
   Stopwatch m("max calc");
   const auto res = std::max_element(data.begin(), data.end());
   std::cout << m.stamp() << ", max = " << *res << "\n";
 
   Stopwatch pm("parallel max calc");
-  const auto res1 = parallel_max(data.begin(), data.end());
-  std::cout << pm.stamp() << ", max = " << *res1 << "\n";
+  const auto res1 = parallel_max(data.begin(), data.end(), threads);
+  std::cout << pm.stamp() << "[" << threads << "], max = " << *res1 << "\n";
   return 0;
 }
