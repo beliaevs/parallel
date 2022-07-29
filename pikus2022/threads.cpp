@@ -50,7 +50,6 @@ int main()
         Stopwatch sw("start thread");
         auto work = [&](){ 
             sum_start += sw.milliseconds();
-            sw.reset(); 
             };
         std::thread t(work);
         t.join();

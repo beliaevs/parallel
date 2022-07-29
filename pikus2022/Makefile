@@ -1,5 +1,5 @@
 WFLAGS=-Wall -Wpedantic -Wextra
-OPT=-O3
+OPT=-O3 -mavx2
 
 all : threads.exe
 
